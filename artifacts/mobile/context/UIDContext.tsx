@@ -196,53 +196,67 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
 
       setProcessing({
         isProcessing: true,
-        step: `Fetching profiles (0/${newEntries.length})...`,
+        step: `Fetching 0/${newEntries.length}...`,
         progress: 50,
         stepIndex: 3,
       });
 
       const updated = [...newEntries];
+      const BATCH = 20;
+      let completed = 0;
 
-      for (let i = 0; i < updated.length; i++) {
-        const entry = updated[i];
+      for (let batchStart = 0; batchStart < updated.length; batchStart += BATCH) {
+        const slice = updated.slice(batchStart, batchStart + BATCH);
 
+        // Mark whole batch as checking
+        const batchIds = new Set(slice.map((e) => e.id));
         setEntries((prev) =>
-          prev.map((e) => (e.id === entry.id ? { ...e, liveStatus: "checking" } : e))
+          prev.map((e) => (batchIds.has(e.id) ? { ...e, liveStatus: "checking" as LiveStatus } : e))
         );
 
-        const info = await fetchProfileFromServer(entry.uid);
-
-        updated[i] = {
-          ...entry,
-          liveStatus: info.status,
-          name: info.name,
-          username: info.username,
-          pictureUrl: info.pictureUrl,
-        };
-
-        setEntries((prev) =>
-          prev.map((e) =>
-            e.id === entry.id
-              ? {
-                  ...e,
-                  liveStatus: info.status,
-                  name: info.name,
-                  username: info.username,
-                  pictureUrl: info.pictureUrl,
-                }
-              : e
-          )
+        // Fetch all in batch in parallel
+        const results = await Promise.all(
+          slice.map((entry) => fetchProfileFromServer(entry.uid))
         );
 
-        const progress = 50 + Math.round(((i + 1) / updated.length) * 48);
+        // Apply results
+        const updates: Record<string, typeof results[0]> = {};
+        results.forEach((info, i) => {
+          const entry = slice[i]!;
+          const idx = batchStart + i;
+          updated[idx] = {
+            ...entry,
+            liveStatus: info.status,
+            name: info.name,
+            username: info.username,
+            pictureUrl: info.pictureUrl,
+          };
+          updates[entry.id] = info;
+        });
+
+        setEntries((prev) =>
+          prev.map((e) => {
+            const info = updates[e.id];
+            if (!info) return e;
+            return {
+              ...e,
+              liveStatus: info.status,
+              name: info.name,
+              username: info.username,
+              pictureUrl: info.pictureUrl,
+            };
+          })
+        );
+
+        completed += slice.length;
+        const progress = 50 + Math.round((completed / updated.length) * 48);
+        const lastName = results.map((r) => r.name).filter(Boolean).pop();
         setProcessing({
           isProcessing: true,
-          step: `Profile ${i + 1}/${updated.length}${info.name ? ` — ${info.name}` : ""}`,
+          step: `Fetched ${completed}/${updated.length}${lastName ? ` — ${lastName}` : ""}`,
           progress,
           stepIndex: 3,
         });
-
-        await new Promise((r) => setTimeout(r, 100));
       }
 
       save(updated, removedCount);

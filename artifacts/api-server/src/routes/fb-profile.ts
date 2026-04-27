@@ -103,13 +103,23 @@ function extractDataFromHtml(html: string): {
   return { name, username, pictureUrl };
 }
 
-const USER_AGENTS = [
-  "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
-  "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-  "Twitterbot/1.0",
-  "LinkedInBot/1.0 (compatible; Mozilla/5.0; Jakarta Commons-HttpClient/3.1 +http://www.linkedin.com)",
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 Edg/146.0.0.0",
+const FETCH_ATTEMPTS: Array<{ url: string; ua: string }> = [
+  {
+    url: "https://www.facebook.com/profile.php?id=UID",
+    ua: "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+  },
+  {
+    url: "https://mbasic.facebook.com/profile.php?id=UID",
+    ua: "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+  },
+  {
+    url: "https://www.facebook.com/profile.php?id=UID",
+    ua: "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+  },
+  {
+    url: "https://mbasic.facebook.com/profile.php?id=UID",
+    ua: "Twitterbot/1.0",
+  },
 ];
 
 async function fetchProfileFromPage(uid: string): Promise<{
@@ -117,35 +127,27 @@ async function fetchProfileFromPage(uid: string): Promise<{
   username?: string;
   pictureUrl?: string;
 }> {
-  const urls = [
-    `https://www.facebook.com/profile.php?id=${uid}`,
-    `https://m.facebook.com/profile.php?id=${uid}`,
-    `https://mbasic.facebook.com/profile.php?id=${uid}`,
-  ];
-
-  for (const ua of USER_AGENTS) {
-    for (const url of urls) {
-      try {
-        const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 8000);
-        const res = await fetch(url, {
-          signal: ctrl.signal,
-          headers: {
-            "User-Agent": ua,
-            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Cache-Control": "no-cache",
-          },
-          redirect: "follow",
-        });
-        clearTimeout(t);
-        if (!res.ok) continue;
-        const html = await res.text();
-        const result = extractDataFromHtml(html);
-        if (result.name) return result;
-      } catch {
-        continue;
-      }
+  for (const attempt of FETCH_ATTEMPTS) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 5000);
+      const res = await fetch(attempt.url.replace("UID", uid), {
+        signal: ctrl.signal,
+        headers: {
+          "User-Agent": attempt.ua,
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Cache-Control": "no-cache",
+        },
+        redirect: "follow",
+      });
+      clearTimeout(t);
+      if (!res.ok) continue;
+      const html = await res.text();
+      const result = extractDataFromHtml(html);
+      if (result.name) return result;
+    } catch {
+      continue;
     }
   }
   return {};
