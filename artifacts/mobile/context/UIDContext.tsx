@@ -49,6 +49,12 @@ interface UIDContextType {
   removeEntry: (id: string) => void;
   markVisited: (id: string) => void;
   clearAll: () => void;
+  refreshEntry: (id: string) => Promise<void>;
+  refreshUnknown: () => Promise<void>;
+  exportAsText: (includePasswords?: boolean) => string;
+  removeVisited: () => void;
+  removeDead: () => void;
+  resetVisited: () => void;
 }
 
 const UIDContext = createContext<UIDContextType | null>(null);
@@ -470,11 +476,146 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
     AsyncStorage.removeItem(STORAGE_KEY);
   }, []);
 
+  const refreshEntry = useCallback(
+    async (id: string) => {
+      const target = entries.find((e) => e.id === id);
+      if (!target) return;
+      setEntries((prev) =>
+        prev.map((e) => (e.id === id ? { ...e, liveStatus: "checking" } : e))
+      );
+      const info = await fetchProfileFromServer(target.uid);
+      setEntries((prev) => {
+        const updated = prev.map((e) =>
+          e.id === id
+            ? {
+                ...e,
+                liveStatus: info.status,
+                name: info.name ?? e.name,
+                username: info.username ?? e.username,
+                pictureUrl: info.pictureUrl ?? e.pictureUrl,
+              }
+            : e
+        );
+        save(updated, duplicatesRemoved);
+        return updated;
+      });
+    },
+    [entries, save, duplicatesRemoved]
+  );
+
+  const refreshUnknown = useCallback(async () => {
+    const targets = entries.filter(
+      (e) => e.liveStatus === "unknown" || !e.name
+    );
+    if (targets.length === 0) return;
+
+    setProcessing({
+      isProcessing: true,
+      step: `Refreshing 0/${targets.length}...`,
+      progress: 0,
+      stepIndex: 0,
+    });
+
+    setEntries((prev) =>
+      prev.map((e) =>
+        targets.find((t) => t.id === e.id) ? { ...e, liveStatus: "checking" } : e
+      )
+    );
+
+    const onBatchDone = (
+      updates: Record<string, { status: "live" | "dead" | "unknown"; name?: string; username?: string; pictureUrl?: string }>,
+      completed: number,
+      total: number
+    ) => {
+      const lastName = Object.values(updates).map((r) => r.name).filter(Boolean).pop();
+      setProcessing({
+        isProcessing: true,
+        step: `Refreshed ${completed}/${total}${lastName ? ` — ${lastName}` : ""}`,
+        progress: Math.round((completed / total) * 100),
+        stepIndex: 0,
+      });
+      setEntries((prev) =>
+        prev.map((e) => {
+          const info = updates[e.id];
+          if (!info) return e;
+          return {
+            ...e,
+            liveStatus: info.status,
+            name: info.name ?? e.name,
+            username: info.username ?? e.username,
+            pictureUrl: info.pictureUrl ?? e.pictureUrl,
+          };
+        })
+      );
+    };
+
+    const updated = await processBatch(targets, onBatchDone);
+    setEntries((prev) => {
+      const next = prev.map((e) => {
+        const u = updated.find((x) => x.id === e.id);
+        return u ?? e;
+      });
+      save(next, duplicatesRemoved);
+      return next;
+    });
+
+    setProcessing({ isProcessing: false, step: "Done", progress: 100, stepIndex: 0 });
+  }, [entries, save, duplicatesRemoved]);
+
+  const exportAsText = useCallback(
+    (includePasswords = true) => {
+      return entries
+        .map((e) =>
+          includePasswords && e.password ? `${e.uid}|${e.password}` : e.uid
+        )
+        .join("\n");
+    },
+    [entries]
+  );
+
+  const removeVisited = useCallback(() => {
+    setEntries((prev) => {
+      const updated = prev.filter((e) => !e.isVisited);
+      save(updated, duplicatesRemoved);
+      return updated;
+    });
+  }, [save, duplicatesRemoved]);
+
+  const removeDead = useCallback(() => {
+    setEntries((prev) => {
+      const updated = prev.filter((e) => e.liveStatus !== "dead");
+      save(updated, duplicatesRemoved);
+      return updated;
+    });
+  }, [save, duplicatesRemoved]);
+
+  const resetVisited = useCallback(() => {
+    setEntries((prev) => {
+      const updated = prev.map((e) => ({ ...e, isVisited: false }));
+      save(updated, duplicatesRemoved);
+      return updated;
+    });
+  }, [save, duplicatesRemoved]);
+
   const stats = computeStats(entries, duplicatesRemoved);
 
   return (
     <UIDContext.Provider
-      value={{ entries, stats, processing, parseAndProcess, removeEntry, markVisited, clearAll }}
+      value={{
+        entries,
+        stats,
+        processing,
+        parseAndProcess,
+        removeEntry,
+        markVisited,
+        clearAll,
+        refreshEntry,
+        refreshUnknown,
+        exportAsText,
+        removeVisited,
+        removeDead,
+        resetVisited,
+      }}
     >
       {children}
     </UIDContext.Provider>
