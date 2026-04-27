@@ -64,7 +64,7 @@ export default function ListScreen() {
   );
 
   return (
-    <View style={[styles.root, { backgroundColor: "#F0F4F8" }]}>
+    <View style={[styles.root, { backgroundColor: "#EEF2F7" }]}>
       <View
         style={[
           styles.header,
