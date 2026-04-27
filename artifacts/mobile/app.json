@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "Facebook UID Manager",
-    "slug": "mobile",
+    "name": "FB UID - X",
+    "slug": "fbuidx",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "mobile",
+    "scheme": "fbuidx",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
@@ -14,9 +14,12 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": false
+      "supportsTablet": false,
+      "bundleIdentifier": "com.fbuidx.app"
     },
-    "android": {},
+    "android": {
+      "package": "com.fbuidx.app"
+    },
     "web": {
       "favicon": "./assets/images/icon.png"
     },
