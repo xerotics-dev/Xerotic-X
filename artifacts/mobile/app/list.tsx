@@ -3,7 +3,7 @@ import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import * as Sharing from "expo-sharing";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import React, { useCallback, useMemo, useState } from "react";
 import {
   Alert,
@@ -20,7 +20,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ProcessingOverlay } from "@/components/ProcessingOverlay";
 import { StatsBar } from "@/components/StatsBar";
 import { UIDListItem } from "@/components/UIDListItem";
-import { LiveStatus, UIDEntry, useUID } from "@/context/UIDContext";
+import { UIDEntry, useUID } from "@/context/UIDContext";
 import { useColors } from "@/hooks/useColors";
 
 type SortMode = "default" | "live" | "dead" | "unknown" | "visited" | "unvisited";
@@ -497,13 +497,6 @@ export default function ListScreen() {
     </View>
   );
 }
-
-const statusColor = (status: LiveStatus): string => {
-  if (status === "live") return "#22C55E";
-  if (status === "dead") return "#EF4444";
-  if (status === "checking") return "#1877F2";
-  return "#F59E0B";
-};
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
