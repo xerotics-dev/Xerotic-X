@@ -1,4 +1,5 @@
 import { useEffect, useState, type ComponentType } from "react";
+import { SpeedInsights } from "@vercel/speed-insights/react";
 
 import { modules as discoveredModules } from "./.generated/mockup-components";
 
@@ -133,14 +134,22 @@ function App() {
 
   if (previewPath) {
     return (
-      <PreviewRenderer
-        componentPath={previewPath}
-        modules={discoveredModules}
-      />
+      <>
+        <PreviewRenderer
+          componentPath={previewPath}
+          modules={discoveredModules}
+        />
+        <SpeedInsights />
+      </>
     );
   }
 
-  return <Gallery />;
+  return (
+    <>
+      <Gallery />
+      <SpeedInsights />
+    </>
+  );
 }
 
 export default App;
