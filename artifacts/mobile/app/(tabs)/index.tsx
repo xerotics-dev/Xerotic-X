@@ -40,11 +40,22 @@ export default function InputScreen() {
   }, []);
 
   useEffect(() => {
-    if (hasProcessed && !processing.isProcessing && entries.length > 0) {
-      router.push("/list");
+    if (hasProcessed && !processing.isProcessing) {
       setHasProcessed(false);
+      setInputText("");
+      if (entries.length > 0) {
+        router.push("/list");
+      }
     }
   }, [processing.isProcessing, hasProcessed, entries.length]);
+
+  const startProcess = async (mode: "replace" | "append") => {
+    const text = inputText.trim();
+    if (!text) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setHasProcessed(true);
+    await parseAndProcess(text, mode);
+  };
 
   const handleProcess = async () => {
     const text = inputText.trim();
@@ -52,9 +63,27 @@ export default function InputScreen() {
       Alert.alert("Empty Input", "Please paste UIDs or import a .txt file.");
       return;
     }
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setHasProcessed(true);
-    await parseAndProcess(text);
+
+    if (entries.length > 0) {
+      Alert.alert(
+        "Existing List Found",
+        `You already have ${entries.length} UIDs. What do you want to do?`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Add to List",
+            onPress: () => startProcess("append"),
+          },
+          {
+            text: "Replace All",
+            style: "destructive",
+            onPress: () => startProcess("replace"),
+          },
+        ]
+      );
+    } else {
+      await startProcess("replace");
+    }
   };
 
   const handleImportTxt = async () => {
@@ -86,6 +115,11 @@ export default function InputScreen() {
 
   const handleViewList = () => {
     router.push("/list");
+  };
+
+  const handleClearInput = () => {
+    setInputText("");
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
@@ -136,13 +170,22 @@ export default function InputScreen() {
             <Text style={[styles.cardTitle, { color: colors.foreground }]}>
               UID Input
             </Text>
-            {lineCount > 0 && (
-              <View style={[styles.countPill, { backgroundColor: colors.primary + "22" }]}>
-                <Text style={[styles.countText, { color: colors.primary }]}>
-                  {lineCount} lines
-                </Text>
+            {lineCount > 0 ? (
+              <View style={styles.cardHeaderRight}>
+                <View style={[styles.countPill, { backgroundColor: colors.primary + "22" }]}>
+                  <Text style={[styles.countText, { color: colors.primary }]}>
+                    {lineCount} lines
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={handleClearInput}
+                  style={[styles.clearInputBtn, { backgroundColor: colors.destructive + "22" }]}
+                  activeOpacity={0.7}
+                >
+                  <MaterialIcons name="clear" size={14} color={colors.destructive} />
+                </TouchableOpacity>
               </View>
-            )}
+            ) : null}
           </View>
 
           <TextInput
@@ -214,22 +257,23 @@ export default function InputScreen() {
 
         {entries.length > 0 && (
           <TouchableOpacity
-            style={[styles.viewListBtn, { borderColor: colors.border }]}
+            style={[styles.viewListBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
             onPress={handleViewList}
             activeOpacity={0.8}
             testID="view-list-btn"
           >
-            <MaterialIcons name="arrow-forward" size={18} color={colors.info} />
+            <MaterialIcons name="format-list-bulleted" size={18} color={colors.info} />
             <Text style={[styles.viewListText, { color: colors.info }]}>
-              View Last List ({entries.length} UIDs)
+              View List ({entries.length} UIDs)
             </Text>
+            <MaterialIcons name="arrow-forward-ios" size={14} color={colors.info} />
           </TouchableOpacity>
         )}
 
         <View style={[styles.tipCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <MaterialIcons name="lightbulb-outline" size={16} color={colors.warning} />
           <Text style={[styles.tipText, { color: colors.mutedForeground }]}>
-            Tip: UIDs must be numeric. Duplicates are auto-removed. Tap any UID in the list to open its Facebook profile.
+            Tip: UIDs must be numeric. Duplicates are auto-removed. Tap a UID in the list to open its Facebook profile.
           </Text>
         </View>
       </Animated.ScrollView>
@@ -283,6 +327,11 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     flex: 1,
   },
+  cardHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
   countPill: {
     paddingHorizontal: 10,
     paddingVertical: 3,
@@ -291,6 +340,13 @@ const styles = StyleSheet.create({
   countText: {
     fontSize: 12,
     fontFamily: "Inter_600SemiBold",
+  },
+  clearInputBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    justifyContent: "center",
+    alignItems: "center",
   },
   input: {
     minHeight: 180,
@@ -344,11 +400,14 @@ const styles = StyleSheet.create({
     gap: 8,
     borderRadius: 14,
     borderWidth: 1,
-    paddingVertical: 12,
+    paddingVertical: 13,
+    paddingHorizontal: 16,
   },
   viewListText: {
     fontSize: 14,
     fontFamily: "Inter_500Medium",
+    flex: 1,
+    textAlign: "center",
   },
   tipCard: {
     flexDirection: "row",

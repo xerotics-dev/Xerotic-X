@@ -4,8 +4,8 @@ import { router } from "expo-router";
 import React, { useCallback } from "react";
 import {
   Alert,
+  FlatList,
   Platform,
-  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { StatsBar } from "@/components/StatsBar";
 import { UIDListItem } from "@/components/UIDListItem";
-import { useUID } from "@/context/UIDContext";
+import { UIDEntry, useUID } from "@/context/UIDContext";
 import { useColors } from "@/hooks/useColors";
 
 export default function ListScreen() {
@@ -63,8 +63,60 @@ export default function ListScreen() {
     [markVisited]
   );
 
+  const renderItem = useCallback(
+    ({ item, index }: { item: UIDEntry; index: number }) => (
+      <UIDListItem
+        entry={item}
+        index={index}
+        onRemove={handleRemove}
+        onVisited={handleVisited}
+      />
+    ),
+    [handleRemove, handleVisited]
+  );
+
+  const keyExtractor = useCallback((item: UIDEntry) => item.id, []);
+
+  const ListFooter = useCallback(
+    () => (
+      <View style={[styles.footer, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <Text style={[styles.footerText, { color: colors.mutedForeground }]}>
+          Total {stats.total}  ·  Live {stats.live}  ·  Dead {stats.dead}  ·  Unknown {stats.unknown}
+        </Text>
+        {stats.duplicatesRemoved > 0 && (
+          <Text style={[styles.footerSub, { color: colors.mutedForeground }]}>
+            {stats.duplicatesRemoved} duplicates removed
+          </Text>
+        )}
+      </View>
+    ),
+    [stats, colors]
+  );
+
+  const ListEmpty = useCallback(
+    () => (
+      <View style={styles.empty}>
+        <MaterialIcons name="inbox" size={56} color={colors.mutedForeground} />
+        <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+          No UIDs Found
+        </Text>
+        <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+          Go back and paste UIDs to process them.
+        </Text>
+        <TouchableOpacity
+          style={[styles.emptyBtn, { backgroundColor: colors.primary }]}
+          onPress={handleBack}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.emptyBtnText}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    ),
+    [colors, handleBack]
+  );
+
   return (
-    <View style={[styles.root, { backgroundColor: "#EEF2F7" }]}>
+    <View style={[styles.root, { backgroundColor: colors.background }]}>
       <View
         style={[
           styles.header,
@@ -106,45 +158,23 @@ export default function ListScreen() {
 
       <StatsBar stats={stats} />
 
-      {entries.length === 0 ? (
-        <View style={styles.empty}>
-          <MaterialIcons name="inbox" size={56} color={colors.mutedForeground} />
-          <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-            No UIDs Found
-          </Text>
-          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-            Go back and paste UIDs to process them.
-          </Text>
-          <TouchableOpacity
-            style={[styles.emptyBtn, { backgroundColor: colors.primary }]}
-            onPress={handleBack}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.emptyBtnText}>Go Back</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={[styles.scroll, { paddingBottom: btmPad + 20 }]}
-        >
-          {entries.map((entry, idx) => (
-            <UIDListItem
-              key={entry.id}
-              entry={entry}
-              index={idx}
-              onRemove={handleRemove}
-              onVisited={handleVisited}
-            />
-          ))}
-
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>
-              Total {stats.total}  ·  Live {stats.live}  ·  Dead {stats.dead}  ·  Unknown {stats.unknown}
-            </Text>
-          </View>
-        </ScrollView>
-      )}
+      <FlatList
+        data={entries}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
+        ListEmptyComponent={ListEmpty}
+        ListFooterComponent={entries.length > 0 ? ListFooter : null}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[
+          styles.scroll,
+          { paddingBottom: btmPad + 20 },
+          entries.length === 0 && styles.emptyContainer,
+        ]}
+        initialNumToRender={15}
+        maxToRenderPerBatch={20}
+        windowSize={10}
+        removeClippedSubviews
+      />
     </View>
   );
 }
@@ -196,20 +226,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingTop: 12,
   },
+  emptyContainer: {
+    flex: 1,
+  },
   footer: {
     marginTop: 4,
     marginBottom: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    backgroundColor: "#F1F5F9",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderRadius: 12,
+    borderWidth: 1,
     alignItems: "center",
+    gap: 4,
   },
   footerText: {
     fontSize: 12,
-    color: "#64748B",
     fontFamily: "Inter_500Medium",
     letterSpacing: 0.2,
+  },
+  footerSub: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
   },
   empty: {
     flex: 1,

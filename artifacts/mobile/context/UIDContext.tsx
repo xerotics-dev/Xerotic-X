@@ -45,7 +45,7 @@ interface UIDContextType {
   entries: UIDEntry[];
   stats: Stats;
   processing: ProcessingState;
-  parseAndProcess: (input: string) => Promise<void>;
+  parseAndProcess: (input: string, mode?: "replace" | "append") => Promise<void>;
   removeEntry: (id: string) => void;
   markVisited: (id: string) => void;
   clearAll: () => void;
@@ -112,6 +112,42 @@ async function fetchProfileFromServer(uid: string): Promise<{
   }
 }
 
+async function processBatch(
+  newEntries: UIDEntry[],
+  onBatchDone: (updates: Record<string, Awaited<ReturnType<typeof fetchProfileFromServer>>>, completed: number, total: number) => void
+): Promise<UIDEntry[]> {
+  const updated = [...newEntries];
+  const BATCH = 20;
+  let completed = 0;
+
+  for (let batchStart = 0; batchStart < updated.length; batchStart += BATCH) {
+    const slice = updated.slice(batchStart, batchStart + BATCH);
+
+    const results = await Promise.all(
+      slice.map((entry) => fetchProfileFromServer(entry.uid))
+    );
+
+    const updates: Record<string, typeof results[0]> = {};
+    results.forEach((info, i) => {
+      const entry = slice[i]!;
+      const idx = batchStart + i;
+      updated[idx] = {
+        ...entry,
+        liveStatus: info.status,
+        name: info.name,
+        username: info.username,
+        pictureUrl: info.pictureUrl,
+      };
+      updates[entry.id] = info;
+    });
+
+    completed += slice.length;
+    onBatchDone(updates, completed, updated.length);
+  }
+
+  return updated;
+}
+
 export function UIDProvider({ children }: { children: React.ReactNode }) {
   const [entries, setEntries] = useState<UIDEntry[]>([]);
   const [duplicatesRemoved, setDuplicatesRemoved] = useState(0);
@@ -145,7 +181,7 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const parseAndProcess = useCallback(
-    async (input: string) => {
+    async (input: string, mode: "replace" | "append" = "replace") => {
       setProcessing({ isProcessing: true, step: "Parsing input...", progress: 5, stepIndex: 0 });
       await new Promise((r) => setTimeout(r, 600));
 
@@ -191,8 +227,22 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
         isVisited: false,
       }));
 
-      setDuplicatesRemoved(removedCount);
-      setEntries(newEntries);
+      let existingEntries: UIDEntry[] = [];
+
+      if (mode === "append") {
+        setEntries((prev) => {
+          existingEntries = prev;
+          const existingUids = new Set(prev.map((e) => e.uid));
+          const genuinelyNew = newEntries.filter((e) => !existingUids.has(e.uid));
+          return [...prev, ...genuinelyNew];
+        });
+        await new Promise((r) => setTimeout(r, 50));
+      } else {
+        setEntries(newEntries);
+        existingEntries = [];
+      }
+
+      setDuplicatesRemoved(duplicatesRemoved + removedCount);
 
       setProcessing({
         isProcessing: true,
@@ -201,39 +251,19 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
         stepIndex: 3,
       });
 
-      const updated = [...newEntries];
-      const BATCH = 20;
-      let completed = 0;
-
-      for (let batchStart = 0; batchStart < updated.length; batchStart += BATCH) {
-        const slice = updated.slice(batchStart, batchStart + BATCH);
-
-        // Mark whole batch as checking
-        const batchIds = new Set(slice.map((e) => e.id));
-        setEntries((prev) =>
-          prev.map((e) => (batchIds.has(e.id) ? { ...e, liveStatus: "checking" as LiveStatus } : e))
-        );
-
-        // Fetch all in batch in parallel
-        const results = await Promise.all(
-          slice.map((entry) => fetchProfileFromServer(entry.uid))
-        );
-
-        // Apply results
-        const updates: Record<string, typeof results[0]> = {};
-        results.forEach((info, i) => {
-          const entry = slice[i]!;
-          const idx = batchStart + i;
-          updated[idx] = {
-            ...entry,
-            liveStatus: info.status,
-            name: info.name,
-            username: info.username,
-            pictureUrl: info.pictureUrl,
-          };
-          updates[entry.id] = info;
+      const onBatchDone = (
+        updates: Record<string, { status: "live" | "dead" | "unknown"; name?: string; username?: string; pictureUrl?: string }>,
+        completed: number,
+        total: number
+      ) => {
+        const lastName = Object.values(updates).map((r) => r.name).filter(Boolean).pop();
+        const progress = 50 + Math.round((completed / total) * 48);
+        setProcessing({
+          isProcessing: true,
+          step: `Fetched ${completed}/${total}${lastName ? ` — ${lastName}` : ""}`,
+          progress,
+          stepIndex: 3,
         });
-
         setEntries((prev) =>
           prev.map((e) => {
             const info = updates[e.id];
@@ -247,22 +277,19 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
             };
           })
         );
+      };
 
-        completed += slice.length;
-        const progress = 50 + Math.round((completed / updated.length) * 48);
-        const lastName = results.map((r) => r.name).filter(Boolean).pop();
-        setProcessing({
-          isProcessing: true,
-          step: `Fetched ${completed}/${updated.length}${lastName ? ` — ${lastName}` : ""}`,
-          progress,
-          stepIndex: 3,
-        });
-      }
+      const updatedNew = await processBatch(newEntries, onBatchDone);
 
-      save(updated, removedCount);
+      const finalEntries = mode === "append"
+        ? [...existingEntries, ...updatedNew.filter((e) => !existingEntries.some((ex) => ex.uid === e.uid))]
+        : updatedNew;
+
+      save(finalEntries, duplicatesRemoved + removedCount);
+      setEntries(finalEntries);
       setProcessing({ isProcessing: false, step: "Done", progress: 100, stepIndex: 3 });
     },
-    [save]
+    [save, duplicatesRemoved]
   );
 
   const removeEntry = useCallback(
