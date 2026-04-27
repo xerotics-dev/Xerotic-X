@@ -51,7 +51,12 @@ interface UIDContextType {
 }
 
 const UIDContext = createContext<UIDContextType | null>(null);
-const STORAGE_KEY = "@uid_manager_v3";
+const STORAGE_KEY = "@uid_manager_v4";
+
+const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? "";
+const API_BASE = DOMAIN
+  ? `https://${DOMAIN}/api`
+  : "http://localhost:8080/api";
 
 function makeId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
@@ -70,142 +75,40 @@ function computeStats(entries: UIDEntry[], duplicatesRemoved: number): Stats {
   };
 }
 
-function decodeHtmlEntities(text: string): string {
-  return text
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
-    .replace(/&#x27;/g, "'")
-    .replace(/&apos;/g, "'");
-}
-
-async function fetchNameFromMobilePage(uid: string): Promise<string | undefined> {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
-
-    const response = await fetch(
-      `https://m.facebook.com/profile.php?id=${uid}&_fb_noscript=1`,
-      {
-        signal: controller.signal,
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36",
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.9",
-          "Cache-Control": "no-cache",
-        },
-      }
-    );
-    clearTimeout(timer);
-
-    if (!response.ok) return undefined;
-
-    const html = await response.text();
-
-    const titleMatch = html.match(/<title[^>]*>([^<]{2,120})<\/title>/i);
-    if (titleMatch) {
-      const raw = decodeHtmlEntities(titleMatch[1]);
-      const name = raw
-        .replace(/\s*[|\-–]\s*Facebook.*$/i, "")
-        .replace(/\s*\|\s*.*$/, "")
-        .trim();
-      if (
-        name.length >= 2 &&
-        !name.toLowerCase().includes("facebook") &&
-        !name.toLowerCase().includes("log in") &&
-        !name.toLowerCase().includes("sign in") &&
-        !name.toLowerCase().includes("error")
-      ) {
-        return name;
-      }
-    }
-
-    const ogMatches = [
-      html.match(/property="og:title"\s+content="([^"]{2,120})"/i),
-      html.match(/content="([^"]{2,120})"\s+property="og:title"/i),
-      html.match(/"og:title","content":"([^"]{2,120})"/i),
-    ];
-    for (const m of ogMatches) {
-      if (m) {
-        const name = decodeHtmlEntities(m[1]).trim();
-        if (
-          name.length >= 2 &&
-          !name.toLowerCase().includes("facebook") &&
-          !name.toLowerCase().includes("log")
-        ) {
-          return name;
-        }
-      }
-    }
-
-    const h1Match = html.match(/<h1[^>]*>\s*<[^>]+>\s*([^<]{2,80})\s*</i);
-    if (h1Match) {
-      const name = decodeHtmlEntities(h1Match[1]).trim();
-      if (name.length >= 2 && !name.toLowerCase().includes("facebook")) {
-        return name;
-      }
-    }
-
-    return undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function checkFacebookProfile(uid: string): Promise<{
+async function fetchProfileFromServer(uid: string): Promise<{
   status: "live" | "dead" | "unknown";
   name?: string;
   pictureUrl: string;
 }> {
-  const pictureUrl = `https://graph.facebook.com/${uid}/picture?type=normal&width=100&height=100`;
+  const fallbackPic = `https://graph.facebook.com/${uid}/picture?type=normal&width=100&height=100`;
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 7000);
+    const timer = setTimeout(() => controller.abort(), 12000);
 
-    const response = await fetch(
-      `https://graph.facebook.com/${uid}?fields=name,id,picture.type(normal)`,
-      {
-        signal: controller.signal,
-        headers: { Accept: "application/json" },
-      }
-    );
+    const res = await fetch(`${API_BASE}/fb-profile?uid=${uid}`, {
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+    });
     clearTimeout(timer);
 
-    const data = (await response.json()) as {
-      id?: string;
+    if (!res.ok) {
+      return { status: "unknown", pictureUrl: fallbackPic };
+    }
+
+    const data = (await res.json()) as {
+      status?: "live" | "dead" | "unknown";
       name?: string;
-      picture?: { data?: { url?: string } };
-      error?: { code: number; message: string };
+      pictureUrl?: string;
     };
 
-    if (data?.id) {
-      const picFromApi = data.picture?.data?.url ?? pictureUrl;
-      return { status: "live", name: data.name, pictureUrl: picFromApi };
-    }
-
-    if (data?.error) {
-      const code = data.error.code;
-      const msg = (data.error.message ?? "").toLowerCase();
-
-      if (code === 803 || msg.includes("not exist") || msg.includes("not found")) {
-        return { status: "dead", pictureUrl };
-      }
-
-      if ([2500, 190, 102, 104, 200, 10, 1].includes(code)) {
-        const name = await fetchNameFromMobilePage(uid);
-        return { status: "live", name, pictureUrl };
-      }
-    }
-
-    const name = await fetchNameFromMobilePage(uid);
-    return { status: "unknown", name, pictureUrl };
+    return {
+      status: data.status ?? "unknown",
+      name: data.name,
+      pictureUrl: data.pictureUrl ?? fallbackPic,
+    };
   } catch {
-    const name = await fetchNameFromMobilePage(uid);
-    return { status: "unknown", name, pictureUrl };
+    return { status: "unknown", pictureUrl: fallbackPic };
   }
 }
 
@@ -306,7 +209,8 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
           prev.map((e) => (e.id === entry.id ? { ...e, liveStatus: "checking" } : e))
         );
 
-        const info = await checkFacebookProfile(entry.uid);
+        const info = await fetchProfileFromServer(entry.uid);
+
         updated[i] = {
           ...entry,
           liveStatus: info.status,
@@ -335,7 +239,7 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
           stepIndex: 3,
         });
 
-        await new Promise((r) => setTimeout(r, 150));
+        await new Promise((r) => setTimeout(r, 100));
       }
 
       save(updated, removedCount);
