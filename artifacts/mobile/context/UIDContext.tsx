@@ -82,42 +82,138 @@ function decodeHtml(text: string): string {
     .replace(/&apos;/g, "'");
 }
 
-function extractNameFromHtml(html: string): string | undefined {
-  if (
+function isLoginWall(html: string): boolean {
+  return (
     html.includes('href="https://www.facebook.com/login"') ||
-    html.includes("/login?next=")
-  ) return undefined;
+    html.includes("/login.php?") ||
+    html.includes("/login?next=") ||
+    html.includes('"loginRedirect"') ||
+    html.includes("checkpoint/block")
+  );
+}
 
-  const patterns = [
-    new RegExp(`property="og:title"\\s+content="([^"]{2,100})"`, "i"),
-    new RegExp(`content="([^"]{2,100})"\\s+property="og:title"`, "i"),
+function isSystemName(name: string): boolean {
+  return (
+    /^(facebook|log in|sign up|error|page not found)/i.test(name) ||
+    (!name.includes(" ") && /^[A-Z][a-zA-Z]{20,}$/.test(name)) ||
+    /^[a-z_]{12,}$/.test(name)
+  );
+}
+
+function cleanName(raw: string): string | undefined {
+  const cleaned = decodeHtml(raw)
+    .replace(/\s*[|\-–]\s*Facebook.*$/i, "")
+    .replace(/\s*\|\s*.*$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (cleaned.length < 2 || cleaned.length > 80) return undefined;
+  if (isSystemName(cleaned)) return undefined;
+  return cleaned;
+}
+
+function extractNameFromHtml(html: string): string | undefined {
+  if (isLoginWall(html)) return undefined;
+
+  const ogPatterns = [
+    /property="og:title"\s+content="([^"]{2,100})"/i,
+    /content="([^"]{2,100})"\s+property="og:title"/i,
+    /<meta\s+property="og:title"\s+content="([^"]{2,100})"/i,
   ];
-  for (const p of patterns) {
+  for (const p of ogPatterns) {
     const m = html.match(p);
     if (m?.[1]) {
-      const name = decodeHtml(m[1])
-        .replace(/\s*[|\-–]\s*Facebook.*$/i, "")
-        .trim();
-      if (name.length >= 2 && !name.toLowerCase().includes("facebook") && !name.toLowerCase().includes("log in"))
-        return name;
+      const name = cleanName(m[1]);
+      if (name) return name;
     }
   }
-  const titleMatch = html.match(/<title[^>]*>([^<]{2,100})<\/title>/i);
+
+  const titleMatch = html.match(/<title[^>]*>([^<]{2,120})<\/title>/i);
   if (titleMatch) {
-    const name = decodeHtml(titleMatch[1])
-      .replace(/\s*[|\-–]\s*Facebook.*$/i, "")
-      .trim();
-    if (name.length >= 2 && !name.toLowerCase().includes("facebook"))
-      return name;
+    const name = cleanName(titleMatch[1]);
+    if (name) return name;
   }
+
+  const h1Match = html.match(/<h1[^>]*>([^<]{2,80})<\/h1>/i);
+  if (h1Match) {
+    const name = cleanName(h1Match[1]);
+    if (name) return name;
+  }
+
+  const titleSpan = html.match(/<strong[^>]*>([^<]{2,80})<\/strong>/i);
+  if (titleSpan) {
+    const name = cleanName(titleSpan[1]);
+    if (name) return name;
+  }
+
   return undefined;
 }
 
 function extractUsernameFromHtml(html: string): string | undefined {
-  const p = /property="og:url"\s+content="[^"]*facebook\.com\/([^/?#"]+)"/i;
-  const m = html.match(p);
-  if (m?.[1] && m[1] !== "profile.php" && m[1] !== "people") return m[1];
+  const ogUrl = html.match(/property="og:url"\s+content="[^"]*facebook\.com\/([^/?#"]+)"/i);
+  if (ogUrl?.[1] && ogUrl[1] !== "profile.php" && ogUrl[1] !== "people" && !/^\d+$/.test(ogUrl[1])) {
+    return ogUrl[1];
+  }
+  const canonical = html.match(/<link\s+rel="canonical"\s+href="[^"]*facebook\.com\/([^/?#"]+)"/i);
+  if (canonical?.[1] && canonical[1] !== "profile.php" && !/^\d+$/.test(canonical[1])) {
+    return canonical[1];
+  }
   return undefined;
+}
+
+const FETCH_ATTEMPTS = [
+  {
+    url: (uid: string) => `https://www.facebook.com/profile.php?id=${uid}`,
+    ua: "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+  },
+  {
+    url: (uid: string) => `https://mbasic.facebook.com/profile.php?id=${uid}`,
+    ua: "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+  },
+  {
+    url: (uid: string) => `https://m.facebook.com/profile.php?id=${uid}`,
+    ua: "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+  },
+  {
+    url: (uid: string) => `https://www.facebook.com/${uid}`,
+    ua: "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+  },
+  {
+    url: (uid: string) => `https://mbasic.facebook.com/${uid}`,
+    ua: "Twitterbot/1.0",
+  },
+];
+
+async function tryFetchHtml(url: string, ua: string, timeoutMs: number): Promise<string | null> {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: {
+        "User-Agent": ua,
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
+      },
+      redirect: "follow",
+    });
+    clearTimeout(t);
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchProfileData(uid: string): Promise<{ name?: string; username?: string }> {
+  for (const attempt of FETCH_ATTEMPTS) {
+    const html = await tryFetchHtml(attempt.url(uid), attempt.ua, 6000);
+    if (!html) continue;
+    const name = extractNameFromHtml(html);
+    const username = extractUsernameFromHtml(html);
+    if (name) return { name, username };
+  }
+  return {};
 }
 
 async function fetchProfileFromServer(uid: string): Promise<{
@@ -128,62 +224,37 @@ async function fetchProfileFromServer(uid: string): Promise<{
 }> {
   const pictureUrl = `https://graph.facebook.com/${uid}/picture?type=normal&width=100&height=100`;
 
-  try {
-    // 1. Live status check via Graph API (no token needed)
-    const ctrl1 = new AbortController();
-    const t1 = setTimeout(() => ctrl1.abort(), 8000);
-    const graphRes = await fetch(`https://graph.facebook.com/${uid}`, {
-      signal: ctrl1.signal,
-      headers: { Accept: "application/json" },
-    });
-    clearTimeout(t1);
-
-    let status: "live" | "dead" | "unknown" = "unknown";
-    if (graphRes.ok) {
-      const data = (await graphRes.json()) as {
+  // Run live check + profile data in parallel
+  const liveCheck = (async (): Promise<"live" | "dead" | "unknown"> => {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 8000);
+      const res = await fetch(`https://graph.facebook.com/${uid}`, {
+        signal: ctrl.signal,
+        headers: { Accept: "application/json" },
+      });
+      clearTimeout(t);
+      if (!res.ok) return "unknown";
+      const data = (await res.json()) as {
         id?: string;
         error?: { code: number; error_subcode?: number; message: string };
       };
-      if (data.id) {
-        status = "live";
-      } else if (data.error) {
+      if (data.id) return "live";
+      if (data.error) {
         const code = data.error.code;
         const msg = (data.error.message ?? "").toLowerCase();
-        if (code === 803 || (msg.includes("does not exist") && !msg.includes("permissions"))) {
-          status = "dead";
-        } else if ([104, 190, 2500, 102, 200, 10, 1].includes(code)) {
-          status = "live";
-        } else if (code === 100 && (data.error.error_subcode ?? 0) === 33) {
-          status = "live";
-        }
+        if (code === 803 || (msg.includes("does not exist") && !msg.includes("permissions"))) return "dead";
+        if ([104, 190, 2500, 102, 200, 10, 1].includes(code)) return "live";
+        if (code === 100 && (data.error.error_subcode ?? 0) === 33) return "live";
       }
+      return "unknown";
+    } catch {
+      return "unknown";
     }
+  })();
 
-    // 2. Fetch name/username from mbasic Facebook (React Native has no CORS!)
-    let name: string | undefined;
-    let username: string | undefined;
-    try {
-      const ctrl2 = new AbortController();
-      const t2 = setTimeout(() => ctrl2.abort(), 6000);
-      const pageRes = await fetch(`https://mbasic.facebook.com/profile.php?id=${uid}`, {
-        signal: ctrl2.signal,
-        headers: {
-          "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
-          Accept: "text/html",
-        },
-      });
-      clearTimeout(t2);
-      if (pageRes.ok) {
-        const html = await pageRes.text();
-        name = extractNameFromHtml(html);
-        username = extractUsernameFromHtml(html);
-      }
-    } catch { /* silent fail, picture still works */ }
-
-    return { status, name, username, pictureUrl };
-  } catch {
-    return { status: "unknown", pictureUrl };
-  }
+  const [status, profile] = await Promise.all([liveCheck, fetchProfileData(uid)]);
+  return { status, name: profile.name, username: profile.username, pictureUrl };
 }
 
 async function processBatch(
@@ -191,7 +262,7 @@ async function processBatch(
   onBatchDone: (updates: Record<string, Awaited<ReturnType<typeof fetchProfileFromServer>>>, completed: number, total: number) => void
 ): Promise<UIDEntry[]> {
   const updated = [...newEntries];
-  const BATCH = 20;
+  const BATCH = 6;
   let completed = 0;
 
   for (let batchStart = 0; batchStart < updated.length; batchStart += BATCH) {
@@ -217,6 +288,11 @@ async function processBatch(
 
     completed += slice.length;
     onBatchDone(updates, completed, updated.length);
+
+    // Small delay between batches to avoid Facebook rate limiting
+    if (batchStart + BATCH < updated.length) {
+      await new Promise((r) => setTimeout(r, 200));
+    }
   }
 
   return updated;
