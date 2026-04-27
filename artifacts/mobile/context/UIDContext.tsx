@@ -18,6 +18,7 @@ export interface UIDEntry {
   id: string;
   uid: string;
   password?: string;
+  name?: string;
   liveStatus: LiveStatus;
   isVisited: boolean;
 }
@@ -50,7 +51,7 @@ interface UIDContextType {
 
 const UIDContext = createContext<UIDContextType | null>(null);
 
-const STORAGE_KEY = "@uid_manager_v1";
+const STORAGE_KEY = "@uid_manager_v2";
 
 function makeId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
@@ -69,42 +70,53 @@ function computeStats(entries: UIDEntry[], duplicatesRemoved: number): Stats {
   };
 }
 
-async function checkFacebookLive(uid: string): Promise<"live" | "dead" | "unknown"> {
+async function checkFacebookInfo(uid: string): Promise<{
+  status: "live" | "dead" | "unknown";
+  name?: string;
+}> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 7000);
 
-    const response = await fetch(`https://graph.facebook.com/${uid}`, {
-      signal: controller.signal,
-      headers: { Accept: "application/json" },
-    });
+    const response = await fetch(
+      `https://graph.facebook.com/${uid}?fields=name,id`,
+      {
+        signal: controller.signal,
+        headers: { Accept: "application/json" },
+      }
+    );
     clearTimeout(timer);
 
     const data = (await response.json()) as {
       id?: string;
+      name?: string;
       error?: { code: number; message: string };
     };
 
-    if (data?.id) return "live";
+    if (data?.id) {
+      return { status: "live", name: data.name };
+    }
 
     if (data?.error) {
       const code = data.error.code;
       const msg = (data.error.message ?? "").toLowerCase();
 
-      if (code === 803) return "dead";
+      if (code === 803) return { status: "dead" };
       if (
         msg.includes("does not exist") ||
         msg.includes("not exist") ||
         msg.includes("not found")
-      )
-        return "dead";
-
-      if ([2500, 190, 102, 104, 200, 10].includes(code)) return "live";
+      ) {
+        return { status: "dead" };
+      }
+      if ([2500, 190, 102, 104, 200, 10].includes(code)) {
+        return { status: "live" };
+      }
     }
 
-    return "unknown";
+    return { status: "unknown" };
   } catch {
-    return "unknown";
+    return { status: "unknown" };
   }
 }
 
@@ -128,25 +140,26 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
           };
           setEntries(parsed.entries ?? []);
           setDuplicatesRemoved(parsed.duplicatesRemoved ?? 0);
-        } catch {
-        }
+        } catch {}
       }
     });
   }, []);
 
-  const save = useCallback(
-    (newEntries: UIDEntry[], dups: number) => {
-      AsyncStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ entries: newEntries, duplicatesRemoved: dups })
-      );
-    },
-    []
-  );
+  const save = useCallback((newEntries: UIDEntry[], dups: number) => {
+    AsyncStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ entries: newEntries, duplicatesRemoved: dups })
+    );
+  }, []);
 
   const parseAndProcess = useCallback(
     async (input: string) => {
-      setProcessing({ isProcessing: true, step: "Parsing input...", progress: 5, stepIndex: 0 });
+      setProcessing({
+        isProcessing: true,
+        step: "Parsing input...",
+        progress: 5,
+        stepIndex: 0,
+      });
       await new Promise((r) => setTimeout(r, 600));
 
       const lines = input
@@ -162,7 +175,12 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
         if (uid) parsed.push({ uid, password: pw || undefined });
       }
 
-      setProcessing({ isProcessing: true, step: "Removing duplicates...", progress: 20, stepIndex: 1 });
+      setProcessing({
+        isProcessing: true,
+        step: "Removing duplicates...",
+        progress: 20,
+        stepIndex: 1,
+      });
       await new Promise((r) => setTimeout(r, 500));
 
       const seen = new Set<string>();
@@ -175,7 +193,12 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
       }
       const removedCount = parsed.length - unique.length;
 
-      setProcessing({ isProcessing: true, step: "Validating UIDs...", progress: 40, stepIndex: 2 });
+      setProcessing({
+        isProcessing: true,
+        step: "Validating UIDs...",
+        progress: 40,
+        stepIndex: 2,
+      });
       await new Promise((r) => setTimeout(r, 500));
 
       const validated = unique.filter((item) => /^\d+$/.test(item.uid));
@@ -184,6 +207,7 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
         id: makeId(),
         uid: item.uid,
         password: item.password,
+        name: undefined,
         liveStatus: "pending" as LiveStatus,
         isVisited: false,
       }));
@@ -193,7 +217,7 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
 
       setProcessing({
         isProcessing: true,
-        step: `Checking live status (0/${newEntries.length})...`,
+        step: `Checking live + name (0/${newEntries.length})...`,
         progress: 50,
         stepIndex: 3,
       });
@@ -204,20 +228,30 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
         const entry = updated[i];
 
         setEntries((prev) =>
-          prev.map((e) => (e.id === entry.id ? { ...e, liveStatus: "checking" } : e))
+          prev.map((e) =>
+            e.id === entry.id ? { ...e, liveStatus: "checking" } : e
+          )
         );
 
-        const status = await checkFacebookLive(entry.uid);
-        updated[i] = { ...entry, liveStatus: status };
+        const info = await checkFacebookInfo(entry.uid);
+        updated[i] = {
+          ...entry,
+          liveStatus: info.status,
+          name: info.name,
+        };
 
         setEntries((prev) =>
-          prev.map((e) => (e.id === entry.id ? { ...e, liveStatus: status } : e))
+          prev.map((e) =>
+            e.id === entry.id
+              ? { ...e, liveStatus: info.status, name: info.name }
+              : e
+          )
         );
 
         const progress = 50 + Math.round(((i + 1) / updated.length) * 48);
         setProcessing({
           isProcessing: true,
-          step: `Live check ${i + 1}/${updated.length}`,
+          step: `Checking ${i + 1}/${updated.length}${info.name ? ` — ${info.name}` : ""}`,
           progress,
           stepIndex: 3,
         });
@@ -227,7 +261,12 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
 
       save(updated, removedCount);
 
-      setProcessing({ isProcessing: false, step: "Done", progress: 100, stepIndex: 3 });
+      setProcessing({
+        isProcessing: false,
+        step: "Done",
+        progress: 100,
+        stepIndex: 3,
+      });
     },
     [save]
   );
