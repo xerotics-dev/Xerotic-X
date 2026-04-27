@@ -37,11 +37,11 @@
       "typedRoutes": true,
       "reactCompiler": true
     },
+    "owner": "parveztg142",
     "extra": {
       "eas": {
-        "projectId": "c71a6526-2eb2-4bae-9a4d-c292da22e49e"
+        "projectId": "ff047a28-4341-4148-8b2b-67bbbbad1b16"
       }
-    },
-    "owner": "parveztg142"
+    }
   }
 }
