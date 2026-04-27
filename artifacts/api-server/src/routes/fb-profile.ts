@@ -14,116 +14,144 @@ function decodeHtml(text: string): string {
     .replace(/&#x2F;/g, "/");
 }
 
+function getMetaContent(html: string, property: string): string | undefined {
+  const patterns = [
+    new RegExp(`property="${property}"\\s+content="([^"]{1,500})"`, "i"),
+    new RegExp(`content="([^"]{1,500})"\\s+property="${property}"`, "i"),
+  ];
+  for (const p of patterns) {
+    const m = html.match(p);
+    if (m?.[1]) return decodeHtml(m[1]).trim();
+  }
+  return undefined;
+}
+
 function isSystemName(name: string): boolean {
-  const noSpace = !name.includes(" ");
   return (
-    (noSpace && /^[A-Z][a-zA-Z]{20,}$/.test(name)) ||
+    (!name.includes(" ") && /^[A-Z][a-zA-Z]{20,}$/.test(name)) ||
     /^[a-z_]{12,}$/.test(name)
   );
 }
 
-function extractNameFromHtml(html: string): string | undefined {
-  const titleMatch = html.match(/<title[^>]*>([^<]{2,120})<\/title>/i);
-  if (titleMatch) {
-    const raw = decodeHtml(titleMatch[1]);
-    const name = raw
+function extractDataFromHtml(html: string): {
+  name?: string;
+  username?: string;
+  pictureUrl?: string;
+} {
+  // Check if redirected to login
+  if (
+    html.includes('href="https://www.facebook.com/login"') ||
+    html.includes("/login?next=") ||
+    html.includes('"loginRedirect"')
+  ) {
+    return {};
+  }
+
+  // Name from og:title
+  let name: string | undefined;
+  const ogTitle = getMetaContent(html, "og:title");
+  if (ogTitle) {
+    const cleaned = ogTitle
       .replace(/\s*[|\-–]\s*Facebook.*$/i, "")
       .replace(/\s*\|\s*.*$/, "")
       .trim();
     if (
-      name.length >= 2 &&
-      !name.toLowerCase().includes("facebook") &&
-      !name.toLowerCase().includes("log in") &&
-      !name.toLowerCase().includes("sign in") &&
-      !name.toLowerCase().includes("sign up") &&
-      !name.toLowerCase().includes("error") &&
-      !name.toLowerCase().includes("page not found")
+      cleaned.length >= 2 &&
+      !cleaned.toLowerCase().includes("facebook") &&
+      !cleaned.toLowerCase().includes("log in") &&
+      !cleaned.toLowerCase().includes("sign") &&
+      !cleaned.toLowerCase().includes("error") &&
+      !isSystemName(cleaned)
     ) {
-      return name;
+      name = cleaned;
     }
   }
 
-  const ogPatterns = [
-    /property="og:title"\s+content="([^"]{2,120})"/i,
-    /content="([^"]{2,120})"\s+property="og:title"/i,
-    /"og:title","content":"([^"]{2,120})"/i,
-  ];
-  for (const p of ogPatterns) {
-    const m = html.match(p);
-    if (m) {
-      const name = decodeHtml(m[1]).trim();
+  // Fallback: <title> tag
+  if (!name) {
+    const titleMatch = html.match(/<title[^>]*>([^<]{2,120})<\/title>/i);
+    if (titleMatch) {
+      const raw = decodeHtml(titleMatch[1])
+        .replace(/\s*[|\-–]\s*Facebook.*$/i, "")
+        .replace(/\s*\|\s*.*$/, "")
+        .trim();
       if (
-        name.length >= 2 &&
-        !name.toLowerCase().includes("facebook") &&
-        !name.toLowerCase().includes("log")
+        raw.length >= 2 &&
+        !raw.toLowerCase().includes("facebook") &&
+        !raw.toLowerCase().includes("log") &&
+        !isSystemName(raw)
       ) {
-        return name;
+        name = raw;
       }
     }
   }
 
-  const jsonNameMatch = html.match(/"name":"([A-Za-z ]{2,80})"/);
-  if (jsonNameMatch) {
-    const name = decodeHtml(jsonNameMatch[1]).trim();
-    if (name.length >= 2 && !isSystemName(name)) return name;
-  }
+  // Profile picture from og:image
+  const ogImage = getMetaContent(html, "og:image");
+  const pictureUrl = ogImage && !ogImage.includes("static") ? ogImage : undefined;
 
-  return undefined;
-}
-
-async function fetchNameFromPage(uid: string): Promise<string | undefined> {
-  const attempts = [
-    {
-      url: `https://m.facebook.com/profile.php?id=${uid}`,
-      ua: "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
-    },
-    {
-      url: `https://www.facebook.com/profile.php?id=${uid}`,
-      ua: "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
-    },
-    {
-      url: `https://m.facebook.com/profile.php?id=${uid}`,
-      ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-    },
-  ];
-
-  for (const ep of attempts) {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 8000);
-      const res = await fetch(ep.url, {
-        signal: ctrl.signal,
-        headers: {
-          "User-Agent": ep.ua,
-          Accept:
-            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.9",
-          "Cache-Control": "no-cache",
-        },
-        redirect: "follow",
-      });
-      clearTimeout(t);
-      if (!res.ok) continue;
-      const html = await res.text();
-      const name = extractNameFromHtml(html);
-      if (name && !isSystemName(name)) return name;
-    } catch {
-      continue;
+  // Username from og:url
+  let username: string | undefined;
+  const ogUrl = getMetaContent(html, "og:url");
+  if (ogUrl) {
+    const m = ogUrl.match(/facebook\.com\/([^/?#]+)/i);
+    if (m?.[1] && m[1] !== "profile.php" && m[1] !== "people") {
+      username = m[1];
     }
   }
-  return undefined;
+
+  return { name, username, pictureUrl };
 }
 
-/**
- * Live/dead detection via Graph API error codes (no token needed).
- * Error code meanings:
- *   803 → account deleted / not found
- *   104, 190, 2500, 102, 200, 10, 1 → account exists but needs auth (LIVE)
- *   100/33 → ambiguous — try HTML scrape for confirmation
- */
-async function checkLiveStatus(uid: string): Promise<{
-  status: "live" | "dead" | "unknown";
+const USER_AGENTS = [
+  "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+  "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+  "Twitterbot/1.0",
+  "LinkedInBot/1.0 (compatible; Mozilla/5.0; Jakarta Commons-HttpClient/3.1 +http://www.linkedin.com)",
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 Edg/146.0.0.0",
+];
+
+async function fetchProfileFromPage(uid: string): Promise<{
+  name?: string;
+  username?: string;
+  pictureUrl?: string;
 }> {
+  const urls = [
+    `https://www.facebook.com/profile.php?id=${uid}`,
+    `https://m.facebook.com/profile.php?id=${uid}`,
+    `https://mbasic.facebook.com/profile.php?id=${uid}`,
+  ];
+
+  for (const ua of USER_AGENTS) {
+    for (const url of urls) {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 8000);
+        const res = await fetch(url, {
+          signal: ctrl.signal,
+          headers: {
+            "User-Agent": ua,
+            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "no-cache",
+          },
+          redirect: "follow",
+        });
+        clearTimeout(t);
+        if (!res.ok) continue;
+        const html = await res.text();
+        const result = extractDataFromHtml(html);
+        if (result.name) return result;
+      } catch {
+        continue;
+      }
+    }
+  }
+  return {};
+}
+
+async function checkLiveStatus(uid: string): Promise<"live" | "dead" | "unknown"> {
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 7000);
@@ -135,28 +163,24 @@ async function checkLiveStatus(uid: string): Promise<{
 
     const data = (await res.json()) as {
       id?: string;
-      name?: string;
       error?: { code: number; error_subcode?: number; message: string };
     };
 
-    if (data.id) return { status: "live" };
+    if (data.id) return "live";
 
     if (data.error) {
       const code = data.error.code;
       const sub = data.error.error_subcode ?? 0;
       const msg = (data.error.message ?? "").toLowerCase();
-
-      if (code === 803) return { status: "dead" };
-      if (msg.includes("does not exist") && !msg.includes("permissions")) return { status: "dead" };
-      if ([104, 190, 2500, 102, 200, 10, 1].includes(code)) return { status: "live" };
-
-      // code 100/33: ambiguous — account may exist but be private
-      if (code === 100 && sub === 33) return { status: "live" };
+      if (code === 803) return "dead";
+      if (msg.includes("does not exist") && !msg.includes("permissions")) return "dead";
+      if ([104, 190, 2500, 102, 200, 10, 1].includes(code)) return "live";
+      if (code === 100 && sub === 33) return "live";
     }
 
-    return { status: "unknown" };
+    return "unknown";
   } catch {
-    return { status: "unknown" };
+    return "unknown";
   }
 }
 
@@ -169,18 +193,20 @@ router.get("/fb-profile", async (req, res) => {
   }
 
   try {
-    const pictureUrl = `https://graph.facebook.com/${uid}/picture?type=normal&width=100&height=100`;
+    // Always provide a reliable picture URL via graph API (public redirect)
+    const fallbackPic = `https://graph.facebook.com/${uid}/picture?type=normal&width=100&height=100`;
 
-    const [liveResult, name] = await Promise.all([
+    const [liveStatus, profile] = await Promise.all([
       checkLiveStatus(uid),
-      fetchNameFromPage(uid),
+      fetchProfileFromPage(uid),
     ]);
 
     res.json({
       uid,
-      status: liveResult.status,
-      name: name ?? undefined,
-      pictureUrl,
+      status: liveStatus,
+      name: profile.name,
+      username: profile.username,
+      pictureUrl: profile.pictureUrl ?? fallbackPic,
     });
   } catch {
     res.status(500).json({ error: "Failed to fetch profile" });

@@ -150,6 +150,15 @@ export function UIDListItem({ entry, index, onRemove, onVisited }: Props) {
               </Text>
             )}
 
+            {entry.username && entry.username !== entry.uid ? (
+              <View style={styles.usernameRow}>
+                <MaterialIcons name="alternate-email" size={10} color="#64748B" />
+                <Text style={[styles.username, isVisited && { opacity: 0.45 }]} numberOfLines={1}>
+                  {entry.username}
+                </Text>
+              </View>
+            ) : null}
+
             <TouchableOpacity onPress={handleOpenFacebook} activeOpacity={0.7}>
               <Text style={[styles.uid, isVisited && styles.uidVisited]} numberOfLines={1}>
                 {entry.uid}
@@ -287,6 +296,16 @@ const styles = StyleSheet.create({
     color: "#94A3B8",
     fontFamily: "Inter_400Regular",
     fontStyle: "italic",
+  },
+  usernameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  username: {
+    fontSize: 11,
+    color: "#64748B",
+    fontFamily: "Inter_500Medium",
   },
   uid: {
     fontSize: 12,

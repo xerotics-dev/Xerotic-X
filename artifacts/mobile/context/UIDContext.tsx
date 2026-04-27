@@ -19,6 +19,7 @@ export interface UIDEntry {
   uid: string;
   password?: string;
   name?: string;
+  username?: string;
   pictureUrl?: string;
   liveStatus: LiveStatus;
   isVisited: boolean;
@@ -51,7 +52,7 @@ interface UIDContextType {
 }
 
 const UIDContext = createContext<UIDContextType | null>(null);
-const STORAGE_KEY = "@uid_manager_v4";
+const STORAGE_KEY = "@uid_manager_v5";
 
 const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? "";
 const API_BASE = DOMAIN
@@ -78,10 +79,9 @@ function computeStats(entries: UIDEntry[], duplicatesRemoved: number): Stats {
 async function fetchProfileFromServer(uid: string): Promise<{
   status: "live" | "dead" | "unknown";
   name?: string;
-  pictureUrl: string;
+  username?: string;
+  pictureUrl?: string;
 }> {
-  const fallbackPic = `https://graph.facebook.com/${uid}/picture?type=normal&width=100&height=100`;
-
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 12000);
@@ -92,23 +92,23 @@ async function fetchProfileFromServer(uid: string): Promise<{
     });
     clearTimeout(timer);
 
-    if (!res.ok) {
-      return { status: "unknown", pictureUrl: fallbackPic };
-    }
+    if (!res.ok) return { status: "unknown" };
 
     const data = (await res.json()) as {
       status?: "live" | "dead" | "unknown";
       name?: string;
+      username?: string;
       pictureUrl?: string;
     };
 
     return {
       status: data.status ?? "unknown",
       name: data.name,
-      pictureUrl: data.pictureUrl ?? fallbackPic,
+      username: data.username,
+      pictureUrl: data.pictureUrl,
     };
   } catch {
-    return { status: "unknown", pictureUrl: fallbackPic };
+    return { status: "unknown" };
   }
 }
 
@@ -185,6 +185,7 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
         uid: item.uid,
         password: item.password,
         name: undefined,
+        username: undefined,
         pictureUrl: undefined,
         liveStatus: "pending" as LiveStatus,
         isVisited: false,
@@ -215,6 +216,7 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
           ...entry,
           liveStatus: info.status,
           name: info.name,
+          username: info.username,
           pictureUrl: info.pictureUrl,
         };
 
@@ -225,6 +227,7 @@ export function UIDProvider({ children }: { children: React.ReactNode }) {
                   ...e,
                   liveStatus: info.status,
                   name: info.name,
+                  username: info.username,
                   pictureUrl: info.pictureUrl,
                 }
               : e
