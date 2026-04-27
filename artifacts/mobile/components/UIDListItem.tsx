@@ -152,10 +152,9 @@ export function UIDListItem({ entry, index, onRemove, onVisited }: Props) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const url = `https://www.facebook.com/profile.php?id=${entry.uid}`;
     try {
-      if (await Linking.canOpenURL(url)) await Linking.openURL(url);
-      else Alert.alert("Cannot open", "Facebook link could not be opened.");
+      await Linking.openURL(url);
     } catch {
-      Alert.alert("Error", "Could not open Facebook.");
+      Alert.alert("Error", "Could not open Facebook. Please try again.");
     }
   }, [entry.id, entry.uid, onVisited]);
 
