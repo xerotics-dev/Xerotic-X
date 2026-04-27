@@ -21,6 +21,7 @@ interface Props {
   index: number;
   onRemove: (id: string) => void;
   onVisited: (id: string) => void;
+  onRefresh: (id: string) => Promise<void> | void;
 }
 
 const STATUS_META: Record<string, {
@@ -102,7 +103,7 @@ function Avatar({
     ? name.split(" ").map((w) => w[0] ?? "").join("").toUpperCase().slice(0, 2)
     : uid.slice(-2).toUpperCase();
   const bgColor = stringToColor(uid);
-  const src = pictureUrl ?? `https://graph.facebook.com/${uid}/picture?type=normal&width=100&height=100`;
+  const src = pictureUrl ?? `https://graph.facebook.com/${uid}/picture?type=normal&width=120&height=120`;
 
   if (imgFailed) {
     return (
@@ -119,6 +120,7 @@ function Avatar({
       onError={() => setImgFailed(true)}
       placeholder={{ blurhash: "L6PZfSi_.AyE_3t7t7R**0o#DgR4" }}
       transition={300}
+      cachePolicy="memory-disk"
     />
   );
 }
@@ -141,11 +143,12 @@ function LiveBadge({ status }: { status: LiveStatus }) {
   );
 }
 
-export function UIDListItem({ entry, index, onRemove, onVisited }: Props) {
+function UIDListItemComponent({ entry, index, onRemove, onVisited, onRefresh }: Props) {
   const colors = useColors();
   const s = STATUS_META[entry.liveStatus] ?? STATUS_META.unknown;
   const isVisited = entry.isVisited;
   const cardBg = isVisited ? "#13151F" : s.cardBg;
+  const isChecking = entry.liveStatus === "checking";
 
   const handleOpenFacebook = useCallback(async () => {
     onVisited(entry.id);
@@ -170,10 +173,21 @@ export function UIDListItem({ entry, index, onRemove, onVisited }: Props) {
     }
   }, [entry.password]);
 
+  const handleCopyBoth = useCallback(async () => {
+    const text = entry.password ? `${entry.uid}|${entry.password}` : entry.uid;
+    await Clipboard.setStringAsync(text);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  }, [entry.uid, entry.password]);
+
   const handleRemove = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     onRemove(entry.id);
   }, [entry.id, onRemove]);
+
+  const handleRefresh = useCallback(async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    await onRefresh(entry.id);
+  }, [entry.id, onRefresh]);
 
   return (
     <View style={[styles.card, { backgroundColor: cardBg, borderColor: s.badgeBorder + "55" }]}>
@@ -182,12 +196,10 @@ export function UIDListItem({ entry, index, onRemove, onVisited }: Props) {
       <View style={styles.body}>
         {/* Top row */}
         <View style={styles.topRow}>
-          {/* Number */}
           <View style={[styles.numWrap, { backgroundColor: s.badgeBg, borderColor: s.badgeBorder }]}>
             <Text style={[styles.numText, { color: s.badgeText }]}>{index + 1}</Text>
           </View>
 
-          {/* Avatar */}
           <TouchableOpacity onPress={handleOpenFacebook} activeOpacity={0.8} style={styles.avatarWrap}>
             <Avatar
               uid={entry.uid}
@@ -196,9 +208,13 @@ export function UIDListItem({ entry, index, onRemove, onVisited }: Props) {
               borderColor={isVisited ? "#334155" : s.avatarBorder}
             />
             {isVisited && <View style={styles.avatarDim} />}
+            {isChecking && (
+              <View style={styles.avatarLoading}>
+                <ActivityIndicator size="small" color="#fff" />
+              </View>
+            )}
           </TouchableOpacity>
 
-          {/* Info */}
           <View style={styles.info}>
             {entry.name ? (
               <Text
@@ -208,8 +224,8 @@ export function UIDListItem({ entry, index, onRemove, onVisited }: Props) {
                 {entry.name}
               </Text>
             ) : (
-              <Text style={styles.namePlaceholder} numberOfLines={1}>
-                {entry.liveStatus === "checking" ? "Fetching…" : "Unknown User"}
+              <Text style={[styles.namePlaceholder, isChecking && { color: "#60A5FA" }]} numberOfLines={1}>
+                {isChecking ? "Fetching profile…" : "Unknown User"}
               </Text>
             )}
 
@@ -241,11 +257,9 @@ export function UIDListItem({ entry, index, onRemove, onVisited }: Props) {
             ) : null}
           </View>
 
-          {/* Status badge */}
           <LiveBadge status={entry.liveStatus} />
         </View>
 
-        {/* Divider */}
         <View style={[styles.divider, { backgroundColor: s.badgeBorder + "44" }]} />
 
         {/* Actions */}
@@ -254,22 +268,30 @@ export function UIDListItem({ entry, index, onRemove, onVisited }: Props) {
             style={[styles.actionBtn, { backgroundColor: "#0D1A33", borderColor: "#1D4ED8" }]}
             onPress={handleCopyUID}
             activeOpacity={0.75}
-            testID={`copy-uid-${index}`}
           >
             <MaterialIcons name="content-copy" size={12} color="#60A5FA" />
-            <Text style={[styles.actionLabel, { color: "#60A5FA" }]}>Copy UID</Text>
+            <Text style={[styles.actionLabel, { color: "#60A5FA" }]}>UID</Text>
           </TouchableOpacity>
 
           {entry.password ? (
-            <TouchableOpacity
-              style={[styles.actionBtn, { backgroundColor: "#1A0D2E", borderColor: "#6D28D9" }]}
-              onPress={handleCopyPass}
-              activeOpacity={0.75}
-              testID={`copy-pass-${index}`}
-            >
-              <MaterialIcons name="vpn-key" size={12} color="#A78BFA" />
-              <Text style={[styles.actionLabel, { color: "#A78BFA" }]}>Copy Pass</Text>
-            </TouchableOpacity>
+            <>
+              <TouchableOpacity
+                style={[styles.actionBtn, { backgroundColor: "#1A0D2E", borderColor: "#6D28D9" }]}
+                onPress={handleCopyPass}
+                activeOpacity={0.75}
+              >
+                <MaterialIcons name="vpn-key" size={12} color="#A78BFA" />
+                <Text style={[styles.actionLabel, { color: "#A78BFA" }]}>Pass</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionBtn, { backgroundColor: "#241634", borderColor: "#9333EA" }]}
+                onPress={handleCopyBoth}
+                activeOpacity={0.75}
+              >
+                <MaterialIcons name="copy-all" size={12} color="#C084FC" />
+                <Text style={[styles.actionLabel, { color: "#C084FC" }]}>Both</Text>
+              </TouchableOpacity>
+            </>
           ) : null}
 
           <TouchableOpacity
@@ -278,7 +300,7 @@ export function UIDListItem({ entry, index, onRemove, onVisited }: Props) {
             activeOpacity={0.75}
           >
             <MaterialIcons name="open-in-new" size={12} color="#4ADE80" />
-            <Text style={[styles.actionLabel, { color: "#4ADE80" }]}>Open FB</Text>
+            <Text style={[styles.actionLabel, { color: "#4ADE80" }]}>Open</Text>
           </TouchableOpacity>
 
           <View style={{ flex: 1 }} />
@@ -286,15 +308,27 @@ export function UIDListItem({ entry, index, onRemove, onVisited }: Props) {
           {isVisited && (
             <View style={[styles.visitedChip, { backgroundColor: "#1A1D2E", borderColor: "#334155" }]}>
               <MaterialIcons name="visibility" size={10} color="#475569" />
-              <Text style={[styles.visitedChipText, { color: "#475569" }]}>Visited</Text>
+              <Text style={[styles.visitedChipText, { color: "#475569" }]}>Done</Text>
             </View>
           )}
 
           <TouchableOpacity
-            style={[styles.actionBtn, { backgroundColor: "#210A0A", borderColor: "#7F1D1D", paddingHorizontal: 8 }]}
+            style={[styles.iconActionBtn, { backgroundColor: "#1C1500", borderColor: "#92400E" }]}
+            onPress={handleRefresh}
+            activeOpacity={0.75}
+            disabled={isChecking}
+          >
+            {isChecking ? (
+              <ActivityIndicator size="small" color="#FCD34D" style={{ width: 14, height: 14 }} />
+            ) : (
+              <MaterialIcons name="refresh" size={14} color="#FCD34D" />
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.iconActionBtn, { backgroundColor: "#210A0A", borderColor: "#7F1D1D" }]}
             onPress={handleRemove}
             activeOpacity={0.75}
-            testID={`remove-${index}`}
           >
             <MaterialIcons name="delete-outline" size={14} color="#F87171" />
           </TouchableOpacity>
@@ -304,6 +338,8 @@ export function UIDListItem({ entry, index, onRemove, onVisited }: Props) {
   );
 }
 
+export const UIDListItem = React.memo(UIDListItemComponent);
+
 const styles = StyleSheet.create({
   card: {
     flexDirection: "row",
@@ -312,20 +348,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     overflow: "hidden",
   },
-  accent: {
-    width: 4,
-  },
+  accent: { width: 4 },
   body: {
     flex: 1,
     paddingHorizontal: 11,
     paddingTop: 10,
     paddingBottom: 9,
   },
-  topRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-  },
+  topRow: { flexDirection: "row", alignItems: "center", gap: 9 },
   numWrap: {
     width: 26,
     height: 26,
@@ -334,13 +364,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  numText: {
-    fontSize: 10,
-    fontFamily: "Inter_700Bold",
-  },
-  avatarWrap: {
-    position: "relative",
-  },
+  numText: { fontSize: 10, fontFamily: "Inter_700Bold" },
+  avatarWrap: { position: "relative" },
   avatar: {
     width: 46,
     height: 46,
@@ -358,51 +383,28 @@ const styles = StyleSheet.create({
     borderRadius: 23,
     backgroundColor: "rgba(0,0,0,0.5)",
   },
-  info: {
-    flex: 1,
-    gap: 2,
+  avatarLoading: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 23,
+    backgroundColor: "rgba(24,119,242,0.6)",
+    justifyContent: "center",
+    alignItems: "center",
   },
-  name: {
-    fontSize: 14,
-    fontFamily: "Inter_700Bold",
-    letterSpacing: -0.2,
-  },
-  nameVisited: {
-    textDecorationLine: "line-through",
-  },
+  info: { flex: 1, gap: 2 },
+  name: { fontSize: 14, fontFamily: "Inter_700Bold", letterSpacing: -0.2 },
+  nameVisited: { textDecorationLine: "line-through" },
   namePlaceholder: {
     fontSize: 12,
     color: "#475569",
     fontFamily: "Inter_400Regular",
     fontStyle: "italic",
   },
-  usernameRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 2,
-  },
-  username: {
-    fontSize: 11,
-    color: "#64748B",
-    fontFamily: "Inter_500Medium",
-  },
-  uid: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-  },
-  uidVisited: {
-    textDecorationLine: "line-through",
-  },
-  passRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-  },
-  pass: {
-    fontSize: 11,
-    color: "#64748B",
-    fontFamily: "Inter_400Regular",
-  },
+  usernameRow: { flexDirection: "row", alignItems: "center", gap: 2 },
+  username: { fontSize: 11, color: "#64748B", fontFamily: "Inter_500Medium" },
+  uid: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  uidVisited: { textDecorationLine: "line-through" },
+  passRow: { flexDirection: "row", alignItems: "center", gap: 3 },
+  pass: { fontSize: 11, color: "#64748B", fontFamily: "Inter_400Regular" },
   badge: {
     flexDirection: "row",
     alignItems: "center",
@@ -413,14 +415,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignSelf: "flex-start",
   },
-  badgeText: {
-    fontSize: 11,
-    fontFamily: "Inter_700Bold",
-  },
-  divider: {
-    height: 1,
-    marginVertical: 8,
-  },
+  badgeText: { fontSize: 11, fontFamily: "Inter_700Bold" },
+  divider: { height: 1, marginVertical: 8 },
   actions: {
     flexDirection: "row",
     alignItems: "center",
@@ -436,9 +432,14 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
   },
-  actionLabel: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
+  actionLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  iconActionBtn: {
+    width: 28,
+    height: 26,
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: "center",
+    alignItems: "center",
   },
   visitedChip: {
     flexDirection: "row",
@@ -449,8 +450,5 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
   },
-  visitedChipText: {
-    fontSize: 10,
-    fontFamily: "Inter_500Medium",
-  },
+  visitedChipText: { fontSize: 10, fontFamily: "Inter_500Medium" },
 });
