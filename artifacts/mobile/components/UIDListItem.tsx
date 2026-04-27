@@ -22,102 +22,93 @@ interface Props {
   onVisited: (id: string) => void;
 }
 
-function getFbPictureUrl(uid: string) {
-  return `https://graph.facebook.com/${uid}/picture?type=normal&width=80&height=80`;
-}
+function Avatar({ uid, name, pictureUrl }: { uid: string; name?: string; pictureUrl?: string }) {
+  const [imgFailed, setImgFailed] = useState(false);
 
-function Avatar({ uid, name }: { uid: string; name?: string }) {
-  const [imgError, setImgError] = useState(false);
   const initials = name
-    ? name
-        .split(" ")
-        .map((w) => w[0])
-        .join("")
-        .toUpperCase()
-        .slice(0, 2)
+    ? name.split(" ").map((w) => w[0] ?? "").join("").toUpperCase().slice(0, 2)
     : uid.slice(-2);
 
-  if (imgError) {
-    return (
-      <View style={styles.avatarFallback}>
-        <Text style={styles.avatarInitials}>{initials}</Text>
-      </View>
-    );
-  }
+  const bgColor = stringToColor(uid);
+
+  const Fallback = (
+    <View style={[styles.avatarFallback, { backgroundColor: bgColor }]}>
+      <Text style={styles.avatarInitials}>{initials}</Text>
+    </View>
+  );
+
+  const src = pictureUrl ?? `https://graph.facebook.com/${uid}/picture?type=normal&width=100&height=100`;
+
+  if (imgFailed) return Fallback;
 
   return (
     <Image
-      source={{ uri: getFbPictureUrl(uid) }}
+      source={{ uri: src }}
       style={styles.avatar}
       contentFit="cover"
-      onError={() => setImgError(true)}
-      placeholder={
-        <View style={styles.avatarFallback}>
-          <Text style={styles.avatarInitials}>{initials}</Text>
-        </View>
-      }
+      onError={() => setImgFailed(true)}
+      placeholder={{ blurhash: "L6PZfSi_.AyE_3t7t7R**0o#DgR4" }}
+      transition={300}
     />
   );
 }
 
+function stringToColor(str: string): string {
+  const palette = [
+    "#1877F2", "#E4405F", "#0EA5E9", "#8B5CF6",
+    "#10B981", "#F59E0B", "#EF4444", "#06B6D4",
+  ];
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  return palette[Math.abs(hash) % palette.length] ?? "#1877F2";
+}
+
 function LiveBadge({ status }: { status: LiveStatus }) {
-  const style = badgeStyles[status] ?? badgeStyles.unknown;
   if (status === "checking") {
     return (
-      <View style={[styles.badge, { backgroundColor: "#374151" }]}>
-        <ActivityIndicator
-          size="small"
-          color="#fff"
-          style={{ width: 14, height: 14 }}
-        />
+      <View style={[styles.badge, { backgroundColor: "#6B7280" }]}>
+        <ActivityIndicator size="small" color="#fff" style={{ width: 12, height: 12 }} />
       </View>
     );
   }
+  const s = BADGE_MAP[status] ?? BADGE_MAP.unknown;
   return (
-    <View style={[styles.badge, { backgroundColor: style.bg }]}>
-      <MaterialIcons name={style.icon} size={12} color="#fff" />
-      <Text style={styles.badgeText}>{style.label}</Text>
+    <View style={[styles.badge, { backgroundColor: s.bg }]}>
+      <MaterialIcons name={s.icon} size={12} color="#fff" />
+      <Text style={styles.badgeText}>{s.label}</Text>
     </View>
   );
 }
 
-const badgeStyles: Record<
+const BADGE_MAP: Record<
   string,
-  {
-    bg: string;
-    icon: React.ComponentProps<typeof MaterialIcons>["name"];
-    label: string;
-  }
+  { bg: string; icon: React.ComponentProps<typeof MaterialIcons>["name"]; label: string }
 > = {
-  live: { bg: "#22C55E", icon: "check-circle", label: "Live" },
-  dead: { bg: "#EF4444", icon: "cancel", label: "Dead" },
-  unknown: { bg: "#F59E0B", icon: "help", label: "?" },
-  pending: { bg: "#6B7280", icon: "hourglass-empty", label: "..." },
-  checking: { bg: "#6B7280", icon: "sync", label: "..." },
+  live:    { bg: "#22C55E", icon: "check-circle",   label: "Live" },
+  dead:    { bg: "#EF4444", icon: "cancel",          label: "Dead" },
+  unknown: { bg: "#F59E0B", icon: "help",            label: "?"    },
+  pending: { bg: "#6B7280", icon: "hourglass-empty", label: "..."  },
+  checking:{ bg: "#6B7280", icon: "sync",            label: "..."  },
 };
 
-function ActionBtn({
-  icon,
-  color,
-  label,
-  onPress,
-  testID,
+function Btn({
+  icon, label, color, onPress, testID,
 }: {
   icon: React.ComponentProps<typeof MaterialIcons>["name"];
-  color: string;
   label: string;
+  color: string;
   onPress: () => void;
   testID?: string;
 }) {
   return (
     <TouchableOpacity
       onPress={onPress}
-      style={[styles.actionBtn, { borderColor: color + "44" }]}
-      activeOpacity={0.7}
+      style={[styles.btn, { borderColor: color + "55" }]}
+      activeOpacity={0.72}
       testID={testID}
     >
       <MaterialIcons name={icon} size={13} color={color} />
-      <Text style={[styles.actionLabel, { color }]}>{label}</Text>
+      <Text style={[styles.btnLabel, { color }]}>{label}</Text>
     </TouchableOpacity>
   );
 }
@@ -128,8 +119,7 @@ export function UIDListItem({ entry, index, onRemove, onVisited }: Props) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const url = `https://www.facebook.com/profile.php?id=${entry.uid}`;
     try {
-      const canOpen = await Linking.canOpenURL(url);
-      if (canOpen) {
+      if (await Linking.canOpenURL(url)) {
         await Linking.openURL(url);
       } else {
         Alert.alert("Cannot open", "Facebook link could not be opened.");
@@ -159,51 +149,36 @@ export function UIDListItem({ entry, index, onRemove, onVisited }: Props) {
   const isVisited = entry.isVisited;
 
   return (
-    <View style={[styles.container, isVisited && styles.visitedContainer]}>
-      {isVisited && <View style={styles.visitedOverlay} />}
+    <View style={[styles.container, isVisited && styles.visitedBg]}>
+      <View style={styles.row}>
+        <Text style={styles.num}>{index + 1}</Text>
 
-      <View style={styles.mainRow}>
-        <Text style={styles.num}>{index + 1}.</Text>
-
-        <TouchableOpacity
-          onPress={handleOpenFacebook}
-          activeOpacity={0.8}
-          style={styles.avatarWrap}
-        >
-          <Avatar uid={entry.uid} name={entry.name} />
-          {isVisited && <View style={styles.avatarVisitedDim} />}
+        <TouchableOpacity onPress={handleOpenFacebook} activeOpacity={0.85} style={styles.avatarWrap}>
+          <Avatar uid={entry.uid} name={entry.name} pictureUrl={entry.pictureUrl} />
+          {isVisited && <View style={styles.avatarDim} />}
         </TouchableOpacity>
 
-        <View style={styles.infoBlock}>
+        <View style={styles.info}>
           {entry.name ? (
-            <Text
-              style={[styles.name, isVisited && styles.visitedText]}
-              numberOfLines={1}
-            >
+            <Text style={[styles.name, isVisited && styles.faded]} numberOfLines={1}>
               {entry.name}
             </Text>
           ) : (
             <Text style={styles.namePlaceholder} numberOfLines={1}>
-              Facebook User
+              {entry.liveStatus === "checking" ? "Fetching name..." : "Unknown User"}
             </Text>
           )}
 
           <TouchableOpacity onPress={handleOpenFacebook} activeOpacity={0.7}>
-            <Text
-              style={[styles.uid, isVisited && styles.strikethrough]}
-              numberOfLines={1}
-            >
+            <Text style={[styles.uid, isVisited && styles.strikeUid]} numberOfLines={1}>
               {entry.uid}
             </Text>
           </TouchableOpacity>
 
           {entry.password ? (
             <View style={styles.passRow}>
-              <MaterialIcons name="vpn-key" size={11} color="#9CA3AF" />
-              <Text
-                style={[styles.password, isVisited && styles.strikethrough]}
-                numberOfLines={1}
-              >
+              <MaterialIcons name="vpn-key" size={10} color="#9CA3AF" />
+              <Text style={[styles.pass, isVisited && styles.faded]} numberOfLines={1}>
                 {entry.password}
               </Text>
             </View>
@@ -213,37 +188,21 @@ export function UIDListItem({ entry, index, onRemove, onVisited }: Props) {
         <LiveBadge status={entry.liveStatus} />
       </View>
 
-      <View style={styles.actionsRow}>
-        <ActionBtn
-          icon="content-copy"
-          color="#1877F2"
-          label="Copy UID"
-          onPress={handleCopyUID}
-          testID={`copy-uid-${index}`}
-        />
+      <View style={styles.actions}>
+        <Btn icon="content-copy" label="Copy UID"  color="#1877F2" onPress={handleCopyUID}  testID={`copy-uid-${index}`} />
         {entry.password ? (
-          <ActionBtn
-            icon="vpn-key"
-            color="#8B5CF6"
-            label="Copy Pass"
-            onPress={handleCopyPass}
-            testID={`copy-pass-${index}`}
-          />
+          <Btn icon="vpn-key" label="Copy Pass" color="#8B5CF6" onPress={handleCopyPass} testID={`copy-pass-${index}`} />
         ) : null}
-        <ActionBtn
-          icon="delete-outline"
-          color="#EF4444"
-          label="Remove"
-          onPress={handleRemove}
-          testID={`remove-${index}`}
-        />
-        {isVisited ? (
-          <View style={styles.visitedPill}>
-            <MaterialIcons name="visibility" size={11} color="#60A5FA" />
-            <Text style={styles.visitedPillText}>Visited</Text>
+        <Btn icon="delete-outline" label="Remove" color="#EF4444" onPress={handleRemove} testID={`remove-${index}`} />
+        {isVisited && (
+          <View style={styles.visitedTag}>
+            <MaterialIcons name="visibility" size={10} color="#60A5FA" />
+            <Text style={styles.visitedTagText}>Visited</Text>
           </View>
-        ) : null}
+        )}
       </View>
+
+      {isVisited && <View style={styles.strikeLine} />}
     </View>
   );
 }
@@ -251,25 +210,18 @@ export function UIDListItem({ entry, index, onRemove, onVisited }: Props) {
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingTop: 10,
+    paddingBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: "#E5E7EB",
     backgroundColor: "#FFFFFF",
     position: "relative",
+    overflow: "hidden",
   },
-  visitedContainer: {
+  visitedBg: {
     backgroundColor: "#F8FAFC",
   },
-  visitedOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.03)",
-    zIndex: 0,
-  },
-  mainRow: {
+  row: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
@@ -278,76 +230,71 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#9CA3AF",
     fontFamily: "Inter_500Medium",
-    minWidth: 22,
+    minWidth: 20,
     textAlign: "right",
   },
   avatarWrap: {
     position: "relative",
   },
   avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: "#E5E7EB",
     borderWidth: 2,
-    borderColor: "#1877F222",
+    borderColor: "#DBEAFE",
   },
   avatarFallback: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "#1877F2",
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: "center",
     alignItems: "center",
   },
   avatarInitials: {
-    color: "#fff",
-    fontSize: 16,
+    color: "#FFFFFF",
+    fontSize: 17,
     fontFamily: "Inter_700Bold",
   },
-  avatarVisitedDim: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderRadius: 22,
-    backgroundColor: "rgba(0,0,0,0.3)",
+  avatarDim: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 24,
+    backgroundColor: "rgba(0,0,0,0.32)",
   },
-  infoBlock: {
+  info: {
     flex: 1,
-    gap: 1,
+    gap: 2,
   },
   name: {
     fontSize: 14,
     color: "#111827",
-    fontFamily: "Inter_600SemiBold",
+    fontFamily: "Inter_700Bold",
   },
   namePlaceholder: {
-    fontSize: 13,
+    fontSize: 12,
     color: "#9CA3AF",
     fontFamily: "Inter_400Regular",
     fontStyle: "italic",
   },
+  faded: {
+    opacity: 0.45,
+  },
   uid: {
     fontSize: 13,
     color: "#1877F2",
-    fontFamily: "Inter_500Medium",
+    fontFamily: "Inter_600SemiBold",
   },
-  strikethrough: {
+  strikeUid: {
     textDecorationLine: "line-through",
-    opacity: 0.45,
-  },
-  visitedText: {
-    opacity: 0.5,
+    opacity: 0.4,
   },
   passRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 3,
   },
-  password: {
-    fontSize: 12,
+  pass: {
+    fontSize: 11,
     color: "#6B7280",
     fontFamily: "Inter_400Regular",
   },
@@ -362,17 +309,17 @@ const styles = StyleSheet.create({
   badgeText: {
     color: "#fff",
     fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
+    fontFamily: "Inter_700Bold",
   },
-  actionsRow: {
+  actions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 5,
     marginTop: 8,
-    marginLeft: 76,
+    marginLeft: 78,
     flexWrap: "wrap",
   },
-  actionBtn: {
+  btn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
@@ -382,23 +329,31 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     backgroundColor: "#F9FAFB",
   },
-  actionLabel: {
+  btnLabel: {
     fontSize: 11,
-    fontFamily: "Inter_500Medium",
+    fontFamily: "Inter_600SemiBold",
   },
-  visitedPill: {
+  visitedTag: {
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 4,
     backgroundColor: "#EFF6FF",
-    borderRadius: 10,
+    borderRadius: 8,
     marginLeft: "auto",
   },
-  visitedPillText: {
-    fontSize: 11,
+  visitedTagText: {
+    fontSize: 10,
     color: "#60A5FA",
     fontFamily: "Inter_500Medium",
+  },
+  strikeLine: {
+    position: "absolute",
+    left: 60,
+    right: 12,
+    top: "38%",
+    height: 1,
+    backgroundColor: "rgba(0,0,0,0.1)",
   },
 });
