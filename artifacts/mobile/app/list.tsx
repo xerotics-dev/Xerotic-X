@@ -64,7 +64,7 @@ export default function ListScreen() {
   );
 
   return (
-    <View style={[styles.root, { backgroundColor: colors.background }]}>
+    <View style={[styles.root, { backgroundColor: "#F0F4F8" }]}>
       <View
         style={[
           styles.header,
@@ -128,30 +128,20 @@ export default function ListScreen() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={[styles.scroll, { paddingBottom: btmPad + 20 }]}
         >
-          <View style={styles.sheetWrapper}>
-            <View style={styles.sheetHeader}>
-              <Text style={styles.sheetHeaderText}>#</Text>
-              <Text style={[styles.sheetHeaderText, { flex: 1 }]}>UID / Password</Text>
-              <Text style={styles.sheetHeaderText}>Status</Text>
-            </View>
+          {entries.map((entry, idx) => (
+            <UIDListItem
+              key={entry.id}
+              entry={entry}
+              index={idx}
+              onRemove={handleRemove}
+              onVisited={handleVisited}
+            />
+          ))}
 
-            <View style={styles.sheet}>
-              {entries.map((entry, idx) => (
-                <UIDListItem
-                  key={entry.id}
-                  entry={entry}
-                  index={idx}
-                  onRemove={handleRemove}
-                  onVisited={handleVisited}
-                />
-              ))}
-            </View>
-
-            <View style={styles.sheetFooter}>
-              <Text style={styles.sheetFooterText}>
-                Total: {stats.total} | Live: {stats.live} | Dead: {stats.dead} | Unknown: {stats.unknown}
-              </Text>
-            </View>
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>
+              Total {stats.total}  ·  Live {stats.live}  ·  Dead {stats.dead}  ·  Unknown {stats.unknown}
+            </Text>
           </View>
         </ScrollView>
       )}
@@ -206,45 +196,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingTop: 12,
   },
-  sheetWrapper: {
-    borderRadius: 14,
-    overflow: "hidden",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  sheetHeader: {
-    flexDirection: "row",
+  footer: {
+    marginTop: 4,
+    marginBottom: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    backgroundColor: "#F1F5F9",
+    borderRadius: 12,
     alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    backgroundColor: "#1877F2",
   },
-  sheetHeaderText: {
-    color: "#FFFFFF",
+  footerText: {
     fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    minWidth: 28,
-  },
-  sheet: {
-    backgroundColor: "#FFFFFF",
-    overflow: "hidden",
-  },
-  sheetFooter: {
-    backgroundColor: "#F3F4F6",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
-  },
-  sheetFooterText: {
-    fontSize: 12,
-    color: "#6B7280",
+    color: "#64748B",
     fontFamily: "Inter_500Medium",
-    textAlign: "center",
+    letterSpacing: 0.2,
   },
   empty: {
     flex: 1,
